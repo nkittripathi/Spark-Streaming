@@ -20,6 +20,7 @@ package com.thinkbiganalytics.nifi.v2.spark;
  * #L%
  */
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.thinkbiganalytics.metadata.rest.model.data.Datasource;
 import com.thinkbiganalytics.metadata.rest.model.data.JdbcDatasource;
@@ -34,16 +35,6 @@ import com.thinkbiganalytics.nifi.util.InputStreamReaderRunnable;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.api.records.YarnApplicationState;
-import org.apache.hadoop.yarn.exceptions.YarnException;
-import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.yarn.api.records.ApplicationReport;
-
-import org.apache.nifi.annotation.behavior.Stateful;
-import org.apache.nifi.annotation.lifecycle.OnStopped;
-import org.apache.nifi.annotation.behavior.SupportsBatching;
-import org.apache.nifi.components.state.Scope;
 import org.apache.nifi.annotation.behavior.EventDriven;
 import org.apache.nifi.annotation.behavior.InputRequirement;
 import org.apache.nifi.annotation.documentation.CapabilityDescription;
@@ -62,10 +53,6 @@ import org.apache.nifi.processor.Relationship;
 import org.apache.nifi.processor.exception.ProcessException;
 import org.apache.nifi.processor.util.StandardValidators;
 import org.apache.spark.launcher.SparkLauncher;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.spark.launcher.SparkAppHandle;
-import org.apache.spark.launcher.SparkAppHandle.Listener;
 
 import java.io.File;
 import java.io.IOException;
@@ -81,14 +68,10 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
-import java.security.PrivilegedExceptionAction;
-
 
 import javax.annotation.Nonnull;
 
 @EventDriven
-@SupportsBatching
-@Stateful(description = "", scopes = {Scope.CLUSTER})
 @InputRequirement(InputRequirement.Requirement.INPUT_REQUIRED)
 @Tags({"spark", "thinkbig"})
 @CapabilityDescription("Execute a Spark job.")
@@ -164,13 +147,13 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
         .expressionLanguageSupported(true)
         .build();
     public static final PropertyDescriptor SPARK_YARN_DEPLOY_MODE = new PropertyDescriptor.Builder()
-            .name("Spark YARN Deploy Mode")
-            .description("The deploy mode for YARN master (client, cluster). Only applicable for yarn mode. "
-                         + "NOTE: Please ensure that you have not set this in your application.")
-            .required(false)
-            .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
-            .expressionLanguageSupported(true)
-            .build();
+        .name("Spark YARN Deploy Mode")
+        .description("The deploy mode for YARN master (client, cluster). Only applicable for yarn mode. "
+                     + "NOTE: Please ensure that you have not set this in your application.")
+        .required(false)
+        .addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+        .expressionLanguageSupported(true)
+        .build();
     public static final PropertyDescriptor DRIVER_MEMORY = new PropertyDescriptor.Builder()
         .name("Driver Memory")
         .description("How much RAM to allocate to the driver")
@@ -261,11 +244,6 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
         .required(false)
         .identifiesControllerService(MetadataProviderService.class)
         .build();
-    public static final PropertyDescriptor CATEGORY_NAME = new PropertyDescriptor.Builder().name("Category Name")
-            .required(true).addValidator(StandardValidators.ATTRIBUTE_EXPRESSION_LANGUAGE_VALIDATOR).expressionLanguageSupported(true).build();
-
-    public static final PropertyDescriptor FEED_NAME = new PropertyDescriptor.Builder().name("Feed Name").required(false)
-            .addValidator(StandardValidators.ATTRIBUTE_EXPRESSION_LANGUAGE_VALIDATOR).expressionLanguageSupported(true).build();
 
     /**
      * Matches a comma-separated list of UUIDs
@@ -301,31 +279,27 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
      * Validates that one or more files exist, as specified in a single property.
      */
     public static final Validator createMultipleFilesExistValidator() {
-        return new Validator() {
-            @Override
-            public ValidationResult validate(String subject, String input, ValidationContext context) {
-                final String[] files = input.split(",");
-                for (String filename : files) {
-                    try {
-                        final File file = new File(filename.trim());
-                        if (!file.exists()) {
-                            final String message = "file " + filename + " does not exist";
-                            return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
-                        } else if (!file.isFile()) {
-                            final String message = filename + " is not a file";
-                            return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
-                        } else if (!file.canRead()) {
-                            final String message = "could not read " + filename;
-                            return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
-                        }
-                    } catch (SecurityException e) {
-                        final String message = "Unable to access " + filename + " due to " + e.getMessage();
+        return (subject, input, context) -> {
+            final String[] files = input.split(",");
+            for (String filename : files) {
+                try {
+                    final File file = new File(filename.trim());
+                    if (!file.exists()) {
+                        final String message = "file " + filename + " does not exist";
+                        return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
+                    } else if (!file.isFile()) {
+                        final String message = filename + " is not a file";
+                        return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
+                    } else if (!file.canRead()) {
+                        final String message = "could not read " + filename;
                         return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
                     }
+                } catch (SecurityException e) {
+                    final String message = "Unable to access " + filename + " due to " + e.getMessage();
+                    return new ValidationResult.Builder().subject(subject).input(input).valid(false).explanation(message).build();
                 }
-                return new ValidationResult.Builder().subject(subject).input(input).valid(true).build();
             }
-
+            return new ValidationResult.Builder().subject(subject).input(input).valid(true).build();
         };
     }
 
@@ -363,8 +337,8 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
         pds.add(MAIN_CLASS);
         pds.add(MAIN_ARGS);
         pds.add(SPARK_MASTER);
-        pds.add(SPARK_HOME); 
         pds.add(SPARK_YARN_DEPLOY_MODE);
+        pds.add(SPARK_HOME);
         pds.add(PROCESS_TIMEOUT);
         pds.add(DRIVER_MEMORY);
         pds.add(EXECUTOR_MEMORY);
@@ -373,8 +347,6 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
         pds.add(EXECUTOR_CORES);
         pds.add(NETWORK_TIMEOUT);
         pds.add(HADOOP_CONFIGURATION_RESOURCES);
-        pds.add(CATEGORY_NAME);
-        pds.add(FEED_NAME);
         pds.add(kerberosPrincipal);
         pds.add(kerberosKeyTab);
         pds.add(YARN_QUEUE);
@@ -394,265 +366,11 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
         return propDescriptors;
     }
-    
-   // private static YarnClient client = null;
-    //private static UserGroupInformation userGroupInformation;
-    private Map<String, String> currentState;
-    private boolean isKerberized = false;
-    private static final String APPLICATION_ID = "yarn.application.id.";
-    private static final String RUNNING_FEEDS = "running.feeds.";
-    private static final Log LOG = LogFactory.getLog(ExecuteSparkJob.class);
-    String extraJars; 
-    
-    private void getCurrentState(ProcessContext context) throws YarnException, IOException, InterruptedException {
-        currentState = new HashMap<>(context.getStateManager().getState(Scope.CLUSTER).toMap());
 
-        String yarnSite = context.getProperty(HADOOP_CONFIGURATION_RESOURCES).getValue();
-
-        DelegateSparkKafkaUtilities.initialiseYarn(isKerberized, yarnSite, context.getProperty(kerberosPrincipal).getValue(), context.getProperty(kerberosKeyTab).getValue());
-    }
-    
-    private void stopSparkJob(final ProcessContext context, FlowFile flowFile) throws IOException, YarnException, InterruptedException {
-        int numberOfRunningFeeds = getNumberOfFeeds(context, flowFile);
-        
-        System.out.println("##### In stopSparkJob numberOfRunningFeeds" + numberOfRunningFeeds);
-
-        // if there are no running feeds, you don't need to stop anything. Just return.
-        if (numberOfRunningFeeds == 0) {
-            return;
-        } else if (numberOfRunningFeeds == 1) {
-            // if this is the last feed running for the CATEGORY_NAME/SECURITY_NAME, cancel the Spark job.
-        	System.out.println("##### In stopSparkJob before killSparkJob" + numberOfRunningFeeds);
-            killSparkJob(context, getApplicationID(context, flowFile));
-        	System.out.println("##### In stopSparkJob after killSparkJob" + numberOfRunningFeeds);
-        }
-
-        // decrement the number of running feeds.
-    	System.out.println("##### In stopSparkJob before removeFeed" + numberOfRunningFeeds);
-        removeFeed(context, flowFile);
-        System.out.println("##### In stopSparkJob after removeFeed" + numberOfRunningFeeds);
-    }
-    
-    private int getNumberOfFeeds(ProcessContext context, FlowFile flowFile) throws IOException {
-        int runningFeeds;
-       // System.out.println("##### In getNumberOfFeeds  runningFeeds" + Integer.parseInt(currentState.get(RUNNING_FEEDS + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME))));
-       // System.out.println("##### In getNumberOfFeeds current state contain " + currentState.containsKey(RUNNING_FEEDS + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME) ) );
-        System.out.println("##### In getNumberOfFeeds " + RUNNING_FEEDS);
-        System.out.println("##### In getNumberOfFeeds " + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME));
-        if (!currentState.containsKey(RUNNING_FEEDS + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME) )) {
-            runningFeeds = 0;
-            System.out.println("##### In getNumberOfFeeds runningFeeds" + runningFeeds);
-        } else {
-            runningFeeds = Integer.parseInt(currentState.get(RUNNING_FEEDS + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME)));
-            System.out.println("##### In getNumberOfFeeds in else runningFeeds");
-        }
-        System.out.println("##### In getNumberOfFeeds ");
-        return runningFeeds;
-    }
-    
-    private String getApplicationID(ProcessContext context, FlowFile flowFile) throws IOException {
-   
-        return currentState.getOrDefault(makeApplicationId(context, flowFile), null);
-    }
-    
-    private void killSparkJob(final ProcessContext context, String applicationID) throws YarnException, IOException, InterruptedException {
-        YarnClient yarnClient = DelegateSparkKafkaUtilities.getYarnClient();
-
-        List<ApplicationReport> applications;
-
-        if (isKerberized) {
-            applications = DelegateSparkKafkaUtilities.getUserGroupInformation().doAs(new PrivilegedExceptionAction<List<ApplicationReport>>() {
-                @Override
-                public List<ApplicationReport> run() throws YarnException, IOException {
-                    return yarnClient.getApplications();
-                }
-            });
-        } else {
-            applications = yarnClient.getApplications();
-        }
-        
-        for (ApplicationReport application : applications) {
-        	System.out.println("##### application.getApplicationId().toString() " + application.getApplicationId().toString());
-            if (application.getApplicationId().toString().equals(applicationID)) {
-                yarnClient.killApplication(application.getApplicationId());
-                break;
-            }
-        }
-    }
-    
-    private void removeFeed(ProcessContext context, FlowFile flowFile) throws IOException {
-        int numberOfFeeds = getNumberOfFeeds(context, flowFile);
-        System.out.println("##### removeFeed " + numberOfFeeds);
-        currentState.put(makeRunningFeeds(context, flowFile), Integer.toString(numberOfFeeds - 1));
-    }
-    
-    private String makeApplicationId(ProcessContext context, FlowFile flowFile) throws IOException {
-        StringBuilder applicationIDBuilder = new StringBuilder();
-
-        applicationIDBuilder.append(APPLICATION_ID).append(DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME));
-
-        if (context.getProperty(FEED_NAME).isSet()) {
-            applicationIDBuilder.append(".").append(DelegateSparkKafkaUtilities.getProperty(context, flowFile, FEED_NAME));
-        }
-    		System.out.println("##### applicationIDBuilder" + applicationIDBuilder.toString());
-    		
-    		System.out.println("##### makeApplicationId " + applicationIDBuilder.toString());
-        return applicationIDBuilder.toString();
-    }
-    
-    private String makeRunningFeeds(ProcessContext context, FlowFile flowFile) throws IOException {
-        StringBuilder applicationIDBuilder = new StringBuilder();
-
-        applicationIDBuilder.append(RUNNING_FEEDS).append(DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME));
-
-        if (context.getProperty(FEED_NAME).isSet()) {
-            applicationIDBuilder.append(".").append(DelegateSparkKafkaUtilities.getProperty(context, flowFile, FEED_NAME));
-        }
-        System.out.println("##### In makeRunningFeeds applicationIDBuilder" + applicationIDBuilder.toString());
-        return applicationIDBuilder.toString();
-    }
-    
-    private boolean getSparkJobStatus(ProcessContext context, FlowFile flowFile) throws YarnException, IOException, InterruptedException {
-        String applicationID = getApplicationID(context, flowFile);
-
-        LOG.info("Job applicationID is " + applicationID);
-
-        if (applicationID == null) {
-            return false;
-        }
-
-        YarnClient yarnClient = DelegateSparkKafkaUtilities.getYarnClient();
-
-        List<ApplicationReport> applications;
-
-        if (isKerberized) {
-            applications = DelegateSparkKafkaUtilities.getUserGroupInformation().doAs(new PrivilegedExceptionAction<List<ApplicationReport>>() {
-                @Override
-                public List<ApplicationReport> run() throws YarnException, IOException {
-                    return yarnClient.getApplications();
-                }
-            });
-        } else {
-            applications = yarnClient.getApplications();
-        }
-
-        for (ApplicationReport application : applications) {
-        	System.out.println("##### In getSparkJobStatus ApplicationReport" + application.toString());
-         	System.out.println("##### In getSparkJobStatus applicationID" + applicationID);
-            if (application.getApplicationId().toString().equals(applicationID)) {
-                return application.getYarnApplicationState() != YarnApplicationState.FAILED
-                        && application.getYarnApplicationState() != YarnApplicationState.KILLED
-                        && application.getYarnApplicationState() != YarnApplicationState.FINISHED;
-            }
-        }
-
-        return false;
-    }
-    
-    private void executeSparkJob(ProcessContext context, FlowFile flowFile) throws IOException, InterruptedException {
-        SparkLauncher launcher = DelegateSparkKafkaUtilities.getNewSparkLauncher();
-       /* StringBuilder driverOptions = new StringBuilder();
-        StringBuilder executorOptions = new StringBuilder();
-        StringBuilder yarnOptions = new StringBuilder();
-        StringBuilder fileOptions = new StringBuilder(); */
-
-		/*
-         * Set additional JAR files for inclusion in the Spark job's distributed cache.
-		 */
-        if (context.getProperty(extraJars).isSet()) {
-            File folder = new File(context.getProperty(EXTRA_JARS).evaluateAttributeExpressions(flowFile).getValue());
-            File[] files = folder.listFiles((dir, name) -> name.toLowerCase().endsWith(".jar") || name.toLowerCase().endsWith(".JAR"));
-
-            if (files != null) {
-                for (File file : files) {
-                    launcher.addJar(file.getCanonicalPath());
-                }
-            }
-        }
-        
-        LOG.info("About to launch Spark job.");
-
-        SparkAppHandle handle;
-
-        handle = launcher.startApplication();
-
-        // If the application fails to start (the startApplication method returns null), throw an IOException.
-        if (handle == null) {
-            throw new IOException("Unable to launch Spark application. No handle returned!");
-        }
-
-		/*
-		 * The SparkLauncher class utilises an asynchronous architecture. We register a listener.
-		 * When the status of the submitted Spark job changes (e.g., it is assigned an application ID), call
-		 * the setApplicationID method to save it for future reference.
-		 */
-        handle.addListener(new Listener() {
-            @Override
-            public void infoChanged(SparkAppHandle handle) {
-                if (handle.getAppId() != null) {
-                    LOG.info("Spark job now has an applicationID: " + handle.getAppId());
-
-                    try {
-                        setApplicationID(context, handle.getAppId(), flowFile);
-
-                        setState(context);
-                    } catch (IOException e) {
-                        LOG.error(e);
-                    }
-                }
-            }
-
-            @Override
-            public void stateChanged(SparkAppHandle handle) {
-            }
-
-        });
-    }
-    
-    private void setApplicationID(ProcessContext context, String applicationID, FlowFile flowFile) throws IOException {
-        currentState.put(makeApplicationId(context, flowFile), applicationID);
-    }
-    
-    private void setState(ProcessContext context) throws IOException {
-        context.getStateManager().setState(currentState, Scope.CLUSTER);
-    }
-    
-    private void addFeed(ProcessContext context, FlowFile flowFile) throws IOException {
-        int numberOfFeeds = getNumberOfFeeds(context, flowFile);
-        System.out.println("##### numberOfFeeds " + numberOfFeeds);
-
-        LOG.info(DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME)  + " currently has " + numberOfFeeds + " running.");
-        currentState.put(makeRunningFeeds(context, flowFile), Integer.toString(numberOfFeeds + 1));
-    }
-    
-    @OnStopped
-    public void stopAllSparkJobs(final ProcessContext context) throws IOException, YarnException, InterruptedException {
-        getCurrentState(context);
-
-        LOG.info("Stopping all Spark jobs.");
-        System.out.println("##### stopAllSparkJobs ");
-        System.out.println("##### stopAllSparkJobs ");
-
-        for (String key : currentState.keySet()) {
-        	System.out.println("##### key " + key);
-            if (key.startsWith(APPLICATION_ID)) {
-            		System.out.println("##### key.startsWith " + key.startsWith(APPLICATION_ID));
-            		System.out.println("##### currentState.get " + currentState.get(key));
-                killSparkJob(context, currentState.get(key));
-            } else if (key.startsWith(RUNNING_FEEDS)) {
-                currentState.put(key, Integer.toString(0));
-            }
-        }
-
-        // save the state afterwards.
-        setState(context);
-    }
-
-    FlowFile flowFile;
     @Override
     public void onTrigger(final ProcessContext context, final ProcessSession session) throws ProcessException {
         final ComponentLog logger = getLog();
-        flowFile = session.get();
+        FlowFile flowFile = session.get();
         if (flowFile == null) {
             return;
         }
@@ -661,7 +379,8 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
 
         try {
 
-            
+            PROVENANCE_JOB_STATUS_KEY = context.getName() + " Job Status";
+            PROVENANCE_SPARK_EXIT_CODE_KEY = context.getName() + " Spark Exit Code";
 
               /* Configuration parameters for spark launcher */
             String appJar = context.getProperty(APPLICATION_JAR).evaluateAttributeExpressions(flowFile).getValue().trim();
@@ -686,297 +405,107 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
             String datasourceIds = context.getProperty(DATASOURCES).evaluateAttributeExpressions(flowFile).getValue();
             MetadataProviderService metadataService = context.getProperty(METADATA_SERVICE).asControllerService(MetadataProviderService.class);
 
-            String[] confs = null;
-            if (!StringUtils.isEmpty(sparkConfs)) {
-                confs = sparkConfs.split("\\|");
-            }
-
-            String[] args = null;
-            if (!StringUtils.isEmpty(appArgs)) {
-                args = appArgs.split(",");
-            }
-
-            final List<String> extraJarPaths = new ArrayList<>();
-            if (!StringUtils.isEmpty(extraJars)) {
-                extraJarPaths.addAll(Arrays.asList(extraJars.split(",")));
-            } else {
-                getLog().info("No extra jars to be added to class path");
-            }
+            final List<String> extraJarPaths = getExtraJarPaths(extraJars);
 
             // If all 3 fields are filled out then assume kerberos is enabled, and user should be authenticated
-            boolean authenticateUser = false;
-            if (!StringUtils.isEmpty(principal) && !StringUtils.isEmpty(keyTab) && !StringUtils.isEmpty(hadoopConfigurationResources)) {
-                authenticateUser = true;
-            }
-            System.out.println("##### authenticateUser " +authenticateUser);
+            boolean isAuthenticated = !StringUtils.isEmpty(principal) && !StringUtils.isEmpty(keyTab) && !StringUtils.isEmpty(hadoopConfigurationResources);
+            try {
+                if (isAuthenticated && isSecurityEnabled(hadoopConfigurationResources)) {
+                    logger.info("Security is enabled");
 
-            if (authenticateUser) {
-                ApplySecurityPolicy applySecurityObject = new ApplySecurityPolicy();
-                Configuration configuration;
-                try {
-                    getLog().info("Getting Hadoop configuration from " + hadoopConfigurationResources);
-                    configuration = ApplySecurityPolicy.getConfigurationFromResources(hadoopConfigurationResources);
-
-                    if (SecurityUtil.isSecurityEnabled(configuration)) {
-                        getLog().info("Security is enabled");
-                        isKerberized=true;
-                        
-
-                        if (principal.equals("") && keyTab.equals("")) {
-                            getLog().error("Kerberos Principal and Kerberos KeyTab information missing in Kerboeros enabled cluster. {} ", new Object[]{flowFile});
-                            session.transfer(flowFile, REL_FAILURE);
-                            return;
-                        }
-
-                        try {
-                        	 boolean authenticationStatus = applySecurityObject.validateUserWithKerberos(logger, hadoopConfigurationResources, principal, keyTab);
-                        	 if (authenticationStatus) {
-                            getLog().info("User authentication initiated");
-
-                        }
-                            
-                             else {
-                                getLog().error("User authentication failed.  {} ", new Object[]{flowFile});
-                                session.transfer(flowFile, REL_FAILURE);
-                                return;
-                            }
-
-                        } catch (Exception unknownException) {
-                            getLog().error("Unknown exception occurred while validating user : {}.  {} ", new Object[]{unknownException.getMessage(), flowFile});
-                            session.transfer(flowFile, REL_FAILURE);
-                            return;
-                        }
-
+                    if (principal.equals("") && keyTab.equals("")) {
+                        logger.error("Kerberos Principal and Kerberos KeyTab information missing in Kerboeros enabled cluster. {} ", new Object[]{flowFile});
+                        session.transfer(flowFile, REL_FAILURE);
+                        return;
                     }
-                } catch (IOException e1) {
-                    getLog().error("Unknown exception occurred while authenticating user : {} and flow file: {}", new Object[]{e1.getMessage(), flowFile});
-                    session.transfer(flowFile, REL_FAILURE);
-                    return;
+
+                    logger.info("User authentication initiated");
+
+                    boolean authenticationStatus = new ApplySecurityPolicy().validateUserWithKerberos(logger, hadoopConfigurationResources, principal, keyTab);
+                    if (authenticationStatus) {
+                        logger.info("User authenticated successfully.");
+                    } else {
+                        logger.error("User authentication failed.  {} ", new Object[]{flowFile});
+                        session.transfer(flowFile, REL_FAILURE);
+                        return;
+                    }
                 }
+            } catch (IOException e1) {
+                logger.error("Unknown exception occurred while authenticating user : {} and flow file: {}", new Object[]{e1.getMessage(), flowFile});
+                session.transfer(flowFile, REL_FAILURE);
+                return;
+
+            } catch (Exception unknownException) {
+                logger.error("Unknown exception occurred while validating user : {}.  {} ", new Object[]{unknownException.getMessage(), flowFile});
+                session.transfer(flowFile, REL_FAILURE);
+                return;
             }
 
             String sparkHome = context.getProperty(SPARK_HOME).evaluateAttributeExpressions(flowFile).getValue();
 
             // Build environment
-            final Map<String, String> env = new HashMap<>();
-
-            if (StringUtils.isNotBlank(datasourceIds)) {
-                final StringBuilder datasources = new StringBuilder(10240);
-                final ObjectMapper objectMapper = new ObjectMapper();
-                final MetadataProvider provider = metadataService.getProvider();
-
-                for (final String id : datasourceIds.split(",")) {
-                    datasources.append((datasources.length() == 0) ? '[' : ',');
-
-                    final Optional<Datasource> datasource = provider.getDatasource(id);
-                    if (datasource.isPresent()) {
-                        if (datasource.get() instanceof JdbcDatasource && StringUtils.isNotBlank(((JdbcDatasource) datasource.get()).getDatabaseDriverLocation())) {
-                            final String[] databaseDriverLocations = ((JdbcDatasource) datasource.get()).getDatabaseDriverLocation().split(",");
-                            extraJarPaths.addAll(Arrays.asList(databaseDriverLocations));
-                        }
-                        datasources.append(objectMapper.writeValueAsString(datasource.get()));
-                    } else {
-                        logger.error("Required datasource {} is missing for Spark job: {}", new Object[]{id, flowFile});
-                        flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Invalid data source: " + id);
-                        session.transfer(flowFile, REL_FAILURE);
-                        return;
-                    }
-                }
-
-                datasources.append(']');
-                env.put("DATASOURCES", datasources.toString());
+            final Map<String, String> env = getDatasources(session, flowFile, PROVENANCE_JOB_STATUS_KEY, datasourceIds, metadataService, extraJarPaths);
+            if (env == null) {
+                return;
             }
 
              /* Launch the spark job as a child process */
-            
-            
-            /* New Launcher */
-            
-            try {
-                // get the FlowFile's signal attribute.
-                String attribute = flowFile.getAttribute("ATTRIBUTE_SIGNAL");
+            SparkLauncher launcher = new SparkLauncher(env)
+                .setAppResource(appJar)
+                .setMainClass(mainClass)
+                .setMaster(sparkMaster)
+                .setConf(SparkLauncher.DRIVER_MEMORY, driverMemory)
+                .setConf(SPARK_NUM_EXECUTORS, numberOfExecutors)
+                .setConf(SparkLauncher.EXECUTOR_MEMORY, executorMemory)
+                .setConf(SparkLauncher.EXECUTOR_CORES, executorCores)
+                .setConf(SPARK_NETWORK_TIMEOUT_CONFIG_NAME, networkTimeout)
+                .setSparkHome(sparkHome)
+                .setAppName(sparkApplicationName);
 
-                // get the current state from the NiFi state manager, and make sure everything is initialised.
-                getCurrentState(context);
-                
-                System.out.println("##### ATTRIBUTE_SIGNAL " +flowFile.getAttribute("ATTRIBUTE_SIGNAL"));
-                // if the FlowFile is a "Stop FlowFile," stop the spark job (decrement the number of running feeds).
-                if (attribute.equals("stop")) {
-                    stopSparkJob(context, flowFile);
-                    
-                } else {
-                    boolean running = getSparkJobStatus(context, flowFile);
-                    
-                    System.out.println("##### running " +running);
+            OptionalSparkConfigurator optionalSparkConf = new OptionalSparkConfigurator(launcher)
+                .setDeployMode(sparkMaster, sparkYarnDeployMode)
+                .setAuthentication(isAuthenticated, keyTab, principal)
+                .addAppArgs(appArgs)
+                .addSparkArg(sparkConfs)
+                .addExtraJars(extraJarPaths)
+                .setYarnQueue(yarnQueue)
+                .setExtraFiles(extraFiles);
 
-                    LOG.info("Received a start or maintain message.");
+            Process spark = optionalSparkConf.getLaucnher().launch();
 
-                    // if the Spark streaming job is not running, start it.
-                    if (!running) {
-                        LOG.info("Spark job for " + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME)) ;
+            /* Read/clear the process input stream */
+            InputStreamReaderRunnable inputStreamReaderRunnable = new InputStreamReaderRunnable(LogLevel.INFO, logger, spark.getInputStream());
+            Thread inputThread = new Thread(inputStreamReaderRunnable, "stream input");
+            inputThread.start();
 
-                       // executeSparkJob(context, flowFile);
-                        System.out.println("##### Before setting arguments to launcher");
-                        SparkLauncher launcher = new SparkLauncher(env)
-                            .setAppResource(appJar)
-                            .setMainClass(mainClass)
-                            .setMaster(sparkMaster)
-                            .setConf(SparkLauncher.DRIVER_MEMORY, driverMemory)
-                            .setConf(SPARK_NUM_EXECUTORS, numberOfExecutors)
-                            .setConf(SparkLauncher.EXECUTOR_MEMORY, executorMemory)
-                            .setConf(SparkLauncher.EXECUTOR_CORES, executorCores)
-                            .setConf(SPARK_NETWORK_TIMEOUT_CONFIG_NAME, networkTimeout)
-                            .setSparkHome(sparkHome)
-                            .setAppName(sparkApplicationName);
-                        
-                        
+             /* Read/clear the process error stream */
+            InputStreamReaderRunnable errorStreamReaderRunnable = new InputStreamReaderRunnable(LogLevel.INFO, logger, spark.getErrorStream());
+            Thread errorThread = new Thread(errorStreamReaderRunnable, "stream error");
+            errorThread.start();
 
-                        if (authenticateUser) {
-                            launcher.setConf(SPARK_YARN_KEYTAB, keyTab);
-                            launcher.setConf(SPARK_YARN_PRINCIPAL, principal);
-                        }
-                        if (args != null) {
-                            launcher.addAppArgs(args);
-                        }
+            logger.info("Waiting for Spark job to complete");
 
-                        if (confs != null) {
-                            for (String conf : confs) {
-                                getLog().info("Adding sparkconf '" + conf + "'");
-                                launcher.addSparkArg(SPARK_CONFIG_NAME, conf);
-                            }
-                        }
-
-                        if (!extraJarPaths.isEmpty()) {
-                            for (String path : extraJarPaths) {
-                                getLog().info("Adding to class path '" + path + "'");
-                                launcher.addJar(path);
-                            }
-                        }
-                        if (StringUtils.isNotEmpty(yarnQueue)) {
-                            launcher.setConf(SPARK_YARN_QUEUE, yarnQueue);
-                        }
-                        if (StringUtils.isNotEmpty(extraFiles)) {
-                            launcher.addSparkArg(SPARK_EXTRA_FILES_CONFIG_NAME, extraFiles);
-                        }
-
-                        SparkAppHandle handle;
-                        
-                        System.out.println("##### Before launching the job");
-                        handle = launcher.startApplication();
-                        if (handle == null) {
-                        		getLog().error("Spark process timed out after {} seconds using flow file: {}  ", new Object[]{sparkProcessTimeout, flowFile});
-                        		flowFile = session.putAttribute(flowFile, PROVENANCE_SPARK_EXIT_CODE_KEY, "Failed");
-                            session.transfer(flowFile, REL_FAILURE);
-                            throw new IOException("Unable to launch Spark application. No handle returned!");
-                        }
-                        
-                        System.out.println("##### After launching the job");
-
-                		/*
-                		 * The SparkLauncher class utilises an asynchronous architecture. We register a listener.
-                		 * When the status of the submitted Spark job changes (e.g., it is assigned an application ID), call
-                		 * the setApplicationID method to save it for future reference.
-                		 */
-                        handle.addListener(new Listener() {
-                            @Override
-                            public void infoChanged(SparkAppHandle handle) {
-                                if (handle.getAppId() != null) {
-                                	
-                                    LOG.info("Spark job now has an applicationID: " + handle.getAppId());
-                                    
-                                    
-                                    try {
-                                    		
-                                    	System.out.println("##### Before setting up setApplicationID");
-                                        setApplicationID(context, handle.getAppId(), flowFile);
-                                       // session.transfer(flowFile, REL_SUCCESS);
-                                        System.out.println("##### After setting up setApplicationID");
-                                        //setState(context);
-                                         
-                                     //   LOG.info("Spark job for " + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME)  + " is currently running.");
-                                    }  catch (IOException e) {
-                                        LOG.error(e);
-                                    }
-                                }
-                            }
-
-                            @Override
-                            public void stateChanged(SparkAppHandle handle) {
-                            	
-                            	 System.out.println("##### In stateChanged");
-                            //	handle.stop();
-                            }
-
-                        });
-                    }
-                       
-
-                        /* Read/clear the process input stream */
-                  /*      InputStreamReaderRunnable inputStreamReaderRunnable = new InputStreamReaderRunnable(LogLevel.INFO, logger, spark.getInputStream());
-                        Thread inputThread = new Thread(inputStreamReaderRunnable, "stream input");
-                        inputThread.start();
-                        
-
-                         /* Read/clear the process error stream 
-                        InputStreamReaderRunnable errorStreamReaderRunnable = new InputStreamReaderRunnable(LogLevel.INFO, logger, spark.getErrorStream());
-                        Thread errorThread = new Thread(errorStreamReaderRunnable, "stream error");
-                        errorThread.start(); */
-
-                        logger.info("Waiting for Spark job to complete");
-
-                         /* Wait for job completion */
-                    /*    boolean completed = spark.waitFor(sparkProcessTimeout, TimeUnit.SECONDS);
-                        if (!completed) {
-                            spark.destroyForcibly();
-                            
-                            return;
-                        }
-
-                        int exitCode = spark.exitValue();
-
-                        flowFile = session.putAttribute(flowFile, PROVENANCE_SPARK_EXIT_CODE_KEY, exitCode + "");
-                        if (exitCode != 0) {
-                            logger.error("ExecuteSparkJob for {} and flowfile: {} completed with failed status {} ", new Object[]{context.getName(), flowFile, exitCode});
-                            flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Failed");
-                            session.transfer(flowFile, REL_FAILURE);
-                        } else {
-                            logger.info("ExecuteSparkJob for {} and flowfile: {} completed with success status {} ", new Object[]{context.getName(), flowFile, exitCode});
-                            flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Success");
-                            session.transfer(flowFile, REL_SUCCESS);
-                        }
-                    } else {
-                        LOG.info("Spark job for " + DelegateSparkKafkaUtilities.getProperty(context, flowFile, CATEGORY_NAME)  + " is currently running.");
-                    } */
-
-                    // if it is a start FlowFile, we must increment the number of running feeds.
-                    if (attribute.equals("start")) {
-                    	System.out.println("##### Before setting up addFeed");
-                        addFeed(context, flowFile);
-                        System.out.println("##### After setting up addFeed");
-                    }
-                }
-
-                // save the new system state.
-                System.out.println("##### Before setting up setState");
-                setState(context);
-                System.out.println("##### After setting up setState");
-
-                // send the FlowFile to SUCCESS, as no exceptions occurred.
-                session.transfer(flowFile, REL_SUCCESS);
-            } catch (IOException e) {
-                LOG.error("IO error monitoring or starting Spark streaming job.", e);
-
+             /* Wait for job completion */
+            boolean completed = spark.waitFor(sparkProcessTimeout, TimeUnit.SECONDS);
+            if (!completed) {
+                spark.destroyForcibly();
+                getLog().error("Spark process timed out after {} seconds using flow file: {}  ", new Object[]{sparkProcessTimeout, flowFile});
                 session.transfer(flowFile, REL_FAILURE);
-            } catch (YarnException e) {
-                LOG.error("Yarn error monitoring or starting Spark streaming job.", e);
-
-                session.transfer(flowFile, REL_FAILURE);
-            } catch (InterruptedException e) {
-                LOG.error("Interrupted exception while authenticating with Kerberos.", e);
+                return;
             }
-            
-            
 
+            int exitCode = spark.exitValue();
+
+            flowFile = session.putAttribute(flowFile, PROVENANCE_SPARK_EXIT_CODE_KEY, Integer.toString(exitCode));
+            if (exitCode != 0) {
+                logger.error("ExecuteSparkJob for {} and flowfile: {} completed with failed status {} ", new Object[]{context.getName(), flowFile, exitCode});
+                flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Failed");
+                session.transfer(flowFile, REL_FAILURE);
+            } else {
+                logger.info("ExecuteSparkJob for {} and flowfile: {} completed with success status {} ", new Object[]{context.getName(), flowFile, exitCode});
+                flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Success");
+                session.transfer(flowFile, REL_SUCCESS);
+            }
         } catch (final Exception e) {
             logger.error("Unable to execute Spark job {},{}", new Object[]{flowFile, e.getMessage()}, e);
             flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Failed With Exception");
@@ -985,9 +514,62 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
         }
     }
 
+    private Map<String, String> getDatasources(ProcessSession session, FlowFile flowFile, String PROVENANCE_JOB_STATUS_KEY, String datasourceIds, MetadataProviderService metadataService,
+                                               List<String> extraJarPaths) throws JsonProcessingException {
+        final Map<String, String> env = new HashMap<>();
+
+        if (StringUtils.isNotBlank(datasourceIds)) {
+            final StringBuilder datasources = new StringBuilder(10240);
+            final ObjectMapper objectMapper = new ObjectMapper();
+            final MetadataProvider provider = metadataService.getProvider();
+
+            for (final String id : datasourceIds.split(",")) {
+                datasources.append((datasources.length() == 0) ? '[' : ',');
+
+                final Optional<Datasource> datasource = provider.getDatasource(id);
+                if (datasource.isPresent()) {
+                    if (datasource.get() instanceof JdbcDatasource && StringUtils.isNotBlank(((JdbcDatasource) datasource.get()).getDatabaseDriverLocation())) {
+                        final String[] databaseDriverLocations = ((JdbcDatasource) datasource.get()).getDatabaseDriverLocation().split(",");
+                        extraJarPaths.addAll(Arrays.asList(databaseDriverLocations));
+                    }
+                    datasources.append(objectMapper.writeValueAsString(datasource.get()));
+
+                } else {
+                    getLog().error("Required datasource {} is missing for Spark job: {}", new Object[]{id, flowFile});
+                    flowFile = session.putAttribute(flowFile, PROVENANCE_JOB_STATUS_KEY, "Invalid data source: " + id);
+                    session.transfer(flowFile, REL_FAILURE);
+                    return null;
+                }
+            }
+
+            datasources.append(']');
+            env.put("DATASOURCES", datasources.toString());
+        }
+        return env;
+    }
+
+    private boolean isSecurityEnabled(String hadoopConfigurationResources) throws IOException {
+        getLog().info("Getting Hadoop configuration from " + hadoopConfigurationResources);
+        Configuration configuration = ApplySecurityPolicy.getConfigurationFromResources(hadoopConfigurationResources);
+        return SecurityUtil.isSecurityEnabled(configuration);
+    }
+
+    private List<String> getExtraJarPaths(String extraJars) {
+        final List<String> extraJarPaths = new ArrayList<>();
+        if (!StringUtils.isEmpty(extraJars)) {
+            extraJarPaths.addAll(Arrays.asList(extraJars.split(",")));
+        } else {
+            getLog().info("No extra jars to be added to class path");
+        }
+        return extraJarPaths;
+    }
+
+
     @Override
     protected Collection<ValidationResult> customValidate(@Nonnull final ValidationContext validationContext) {
         final Set<ValidationResult> results = new HashSet<>();
+        final String sparkMaster = validationContext.getProperty(SPARK_MASTER).evaluateAttributeExpressions().getValue().trim().toLowerCase();
+        final String sparkYarnDeployMode = validationContext.getProperty(SPARK_YARN_DEPLOY_MODE).evaluateAttributeExpressions().getValue();
 
         if (validationContext.getProperty(DATASOURCES).isSet() && !validationContext.getProperty(METADATA_SERVICE).isSet()) {
             results.add(new ValidationResult.Builder()
@@ -998,7 +580,97 @@ public class ExecuteSparkJob extends AbstractNiFiProcessor {
                             .build());
         }
 
+        if (StringUtils.isNotEmpty(sparkYarnDeployMode)) {
+            if ((!sparkMaster.contains("local")) && (!sparkMaster.equals("yarn")) && (!sparkMaster.contains("mesos")) && (!sparkMaster.contains("spark"))) {
+                results.add(new ValidationResult.Builder()
+                                .subject(this.getClass().getSimpleName())
+                                .valid(false)
+                                .explanation("invalid spark master provided. Valid values will have local, local[n], local[*], yarn, mesos, spark")
+                                .build());
+
+            }
+
+            if (sparkMaster.equals("yarn") && (!(sparkYarnDeployMode.equals("client") || sparkYarnDeployMode.equals("cluster")))) {
+                results.add(new ValidationResult.Builder()
+                                .subject(this.getClass().getSimpleName())
+                                .valid(false)
+                                .explanation("yarn master requires a deploy mode to be specified as either 'client' or 'cluster'")
+                                .build());
+            }
+        }
+
         return results;
     }
-    
+
+    private class OptionalSparkConfigurator {
+
+        private SparkLauncher launcher;
+
+        public OptionalSparkConfigurator(SparkLauncher launcher) {
+            this.launcher = launcher;
+        }
+
+        public SparkLauncher getLaucnher() {
+            return this.launcher;
+        }
+
+        private OptionalSparkConfigurator setDeployMode(String sparkMaster, String sparkYarnDeployMode) {
+            if (sparkMaster.equals("yarn") && StringUtils.isNotEmpty(sparkYarnDeployMode)) {
+                launcher.setDeployMode(sparkYarnDeployMode);
+                getLog().info("YARN deploy mode set to: {}", new Object[]{sparkYarnDeployMode});
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator setAuthentication(boolean authenticateUser, String keyTab, String principal) {
+            if (authenticateUser) {
+                launcher.setConf(SPARK_YARN_KEYTAB, keyTab);
+                launcher.setConf(SPARK_YARN_PRINCIPAL, principal);
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator addAppArgs(String appArgs) {
+            if (!StringUtils.isEmpty(appArgs)) {
+                launcher.addAppArgs(appArgs.split(","));
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator addSparkArg(String sparkConfs) {
+            if (!StringUtils.isEmpty(sparkConfs)) {
+                for (String conf : sparkConfs.split("\\|")) {
+                    getLog().info("Adding sparkconf '" + conf + "'");
+                    launcher.addSparkArg(SPARK_CONFIG_NAME, conf);
+                }
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator addExtraJars(List<String> extraJarPaths) {
+            if (!extraJarPaths.isEmpty()) {
+                for (String path : extraJarPaths) {
+                    getLog().info("Adding to class path '" + path + "'");
+                    launcher.addJar(path);
+                }
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator setYarnQueue(String yarnQueue) {
+            if (StringUtils.isNotEmpty(yarnQueue)) {
+                launcher.setConf(SPARK_YARN_QUEUE, yarnQueue);
+            }
+            return this;
+        }
+
+        private OptionalSparkConfigurator setExtraFiles(String extraFiles) {
+            if (StringUtils.isNotEmpty(extraFiles)) {
+                launcher.addSparkArg(SPARK_EXTRA_FILES_CONFIG_NAME, extraFiles);
+            }
+            return this;
+        }
+
+
+    }
 }
