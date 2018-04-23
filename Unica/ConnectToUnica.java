@@ -213,8 +213,8 @@ public class ConnectToUnica extends AbstractProcessor {
 		HttpsURLConnection httpsURLConn = null;
 		HttpURLConnection httpURLConn = null;
 		String emailRequest = "<Envelope><Body><SendMailing>\r\n" +
-				"<MailingId>1058734</MailingId>\r\n" +
-				"<RecipientEmail>prasad.dhoble@kotak.com</RecipientEmail>\r\n" +
+				"<MailingId>11</MailingId>\r\n" +
+				"<RecipientEmail>xyz@bank.com</RecipientEmail>\r\n" +
 				"</SendMailing>\r\n" +
 				"</Body></Envelope>";
 
@@ -223,11 +223,11 @@ public class ConnectToUnica extends AbstractProcessor {
 				"  \"content\": \"Hey Test SMS from Silverpop\",\n" + 
 				"  \"contacts\": [\n" + 
 				"    {\n" + 
-				"      \"contactId\": \"266867\",\n" + 
+				"      \"contactId\": \"11111\",\n" + 
 				"      \"contactLookup\": [\n" + 
 				"        {\n" + 
 				"          \"name\": \"Mobile_No\",\n" + 
-				"          \"value\": \"919619194811\",\n" + 
+				"          \"value\": \"9876543210\",\n" + 
 				"          \"channel\": \"SMS\"\n" + 
 				"        }\n" + 
 				"      ]\n" + 
