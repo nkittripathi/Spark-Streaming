@@ -43,7 +43,7 @@ import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
 
-@Tags({"Bank","Teradata","Spark"})
+@Tags({"Kotak","Teradata","Spark"})
 @CapabilityDescription("This processor is used to generate start/stop signal in attribute ATTRIBUTE_SIGNAL on the event of start/stop of processor")
 @SeeAlso({})
 @ReadsAttributes({@ReadsAttribute(attribute="", description="")})
@@ -72,6 +72,15 @@ public class SignalGenerator extends AbstractProcessor {
 			.displayName("Bootstrap Servers")
 			.description("The Kylo category name")
 			.defaultValue("localhost:9092")
+			.required(true)
+			.addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+			.build();
+	
+	public static final PropertyDescriptor ZOOKEEPER_CONNECTION = new PropertyDescriptor
+			.Builder().name("Zookeeper Address")
+			.displayName("Zookeeper Address")
+			.description("Zookeeper Address")
+			.defaultValue("localhost:2181")
 			.required(true)
 			.addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
 			.build();
@@ -119,6 +128,15 @@ public class SignalGenerator extends AbstractProcessor {
 			.required(true)
 			.addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
 			.build();
+	
+	public static final PropertyDescriptor AUTO_OFFSET_RESET = new PropertyDescriptor
+			.Builder().name("auto.offset.reset")
+			.displayName("auto.offset.reset")
+			.description("auto.offset.reset")
+			.defaultValue("true")
+			.required(true)
+			.addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
+			.build();
 
 	public static final PropertyDescriptor BASE_URL= new PropertyDescriptor
 			.Builder().name("Kylo Base URL")
@@ -141,6 +159,8 @@ public class SignalGenerator extends AbstractProcessor {
 			.displayName("Kylo Password")
 			.description("Provide Kylo valid password")
 			.required(true)
+			.defaultValue("")
+	        .sensitive(true)
 			.addValidator(StandardValidators.NON_EMPTY_VALIDATOR)
 			.build();
 
@@ -164,14 +184,16 @@ public class SignalGenerator extends AbstractProcessor {
 		descriptors.add(FEED_NAME);
 		descriptors.add(CATEGORY_FIELD);
 		descriptors.add(BOOTSTRAP_SERVERS);
+		descriptors.add(ZOOKEEPER_CONNECTION);
 		descriptors.add(TOPIC_LIST);
+		descriptors.add(AUTO_OFFSET_RESET);
 		descriptors.add(GROUP_ID);
 		descriptors.add(KEY_DESERIALIZER);
 		descriptors.add(VALUE_DESERIALIZER);
 		descriptors.add(ENABLE_AUTO_COMMIT);
 		descriptors.add(BASE_URL);
 		descriptors.add(KYLO_USER);
-		descriptors.add(KYLO_PASSWORD);
+		descriptors.add(KYLO_PASSWORD);				
 
 		this.descriptors = Collections.unmodifiableList(descriptors);
 
@@ -206,9 +228,11 @@ public class SignalGenerator extends AbstractProcessor {
 		flowFile = session.putAttribute(flowFile, "feedname", context.getProperty(FEED_NAME).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "category", context.getProperty(CATEGORY_FIELD).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "bootstrapServer", context.getProperty(BOOTSTRAP_SERVERS).evaluateAttributeExpressions(flowFile).getValue());
+		flowFile = session.putAttribute(flowFile, "zookeeperConnection", context.getProperty(ZOOKEEPER_CONNECTION).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "topicList", context.getProperty(TOPIC_LIST).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "groupID", context.getProperty(GROUP_ID).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "keyDeserializer", context.getProperty(KEY_DESERIALIZER).evaluateAttributeExpressions(flowFile).getValue());
+		flowFile = session.putAttribute(flowFile, "autoOffsetReset", context.getProperty(AUTO_OFFSET_RESET).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "valueDeserializer", context.getProperty(VALUE_DESERIALIZER).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "enableAutoCommit", context.getProperty(ENABLE_AUTO_COMMIT).evaluateAttributeExpressions(flowFile).getValue());
 		flowFile = session.putAttribute(flowFile, "baseurl", context.getProperty(BASE_URL).evaluateAttributeExpressions(flowFile).getValue());
@@ -220,7 +244,7 @@ public class SignalGenerator extends AbstractProcessor {
 
 	}
 	@OnStopped
-	public void stopConsumer() {
+	public void sendStopSignal() {
 		FlowFile flowFile = session.get();
 		flowFile = session.create();
 		flowFile = session.putAttribute(flowFile, "ATTRIBUTE_SIGNAL", "stop");
