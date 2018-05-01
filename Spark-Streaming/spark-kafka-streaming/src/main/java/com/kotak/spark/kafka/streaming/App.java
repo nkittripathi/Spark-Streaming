@@ -1,9 +1,7 @@
-package com.kotak.spark.kafka.streaming;
+package com.bank.spark.kafka.streaming;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.spark.SparkConf;
-import org.apache.spark.SparkContext;
-import org.apache.spark.api.java.function.Function;
 import org.apache.spark.streaming.Durations;
 import org.apache.spark.streaming.api.java.JavaPairInputDStream;
 import org.apache.spark.streaming.api.java.JavaStreamingContext;
@@ -18,57 +16,53 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
-import com.google.common.collect.Lists;
-
 
 import javax.annotation.Nonnull;
 
 /**
- * Hello world!
+ * Spark-Kafka Streaming application
  *
  */
 public class App 
-{
-	private static final Logger log = LoggerFactory.getLogger(App.class);
+{	
+	private static final Logger log = LoggerFactory.getLogger(App.class);	
 	
-    public static void main( String[] args )
-    
+    public static void main( String[] args )   
     {
     	 if (log.isInfoEnabled()) {
-             log.info("Running Spark Validator with the following command line args (comma separated):{}", StringUtils.join(args, ","));
-         }
-        System.out.println( "Hello World!" );
-        
-        new App().run(System.out, args);
-        
+    		 log.info("Running Spark-Kafka Streaming with the following command line args (comma separated):{}", StringUtils.join(args, ","));
+       } 
+        new App().run(System.out, args);        
     }
-    
-    
+   
     private void run(@Nonnull final PrintStream out, @Nonnull final String... args) {
-        // Check how many arguments were passed in
-        if (args.length < 4) {
-            String msg = "Proper Usage is: <bootstrap.servers> <zookeeper.connect> <topiclist> <group.id> <auto.offset.reset>\n"  + StringUtils.join(args, ",");
+        if (args.length < 11) {
+            String msg = "Proper Usage is: <bootstrap.servers> <zookeeper.connect> <topiclist> <group.id> <auto.offset.reset> <feedname> <category> <uuid> <baseurl> <username> <password>\n"  + StringUtils.join(args, ",");
             out.println(msg);
             throw new IllegalArgumentException(msg);
         }
         
         SparkConf sparkConf = new SparkConf().setAppName("Streaming Started");
-      
-        JavaStreamingContext streamingContext = new JavaStreamingContext(sparkConf, Durations.seconds(2));
-        System.out.println( "bootstrap.servers" + args[0]);
-        System.out.println( "zookeeper.connect"+ args[1]);
-        System.out.println( "group.id" + args[3] );
-        System.out.println( "auto.offset.reset" + args[4]);
-        System.out.println( "topiclist" + args[2]);
-        Map<String, String> kafkaParams = new HashMap<>();
-        kafkaParams.put("bootstrap.servers", args[0]);
-        kafkaParams.put("zookeeper.connect", args[1]);
-        kafkaParams.put("group.id", args[3]);
-        kafkaParams.put("auto.offset.reset", args[4]);
+        String boostrapServer = args[0];
+        String zookeeper = args[1];
         String topiclist = args[2];
+        String groupId = args[3];
+        String autoOffsetReset = args[4];
+        String feedname = args[5];
+    		String category = args[6];
+    		String uuid = args[7];
+    		String baseurl = args[8];
+    		String username = args[9];
+    		String password = args[10];
+    		
+        JavaStreamingContext streamingContext = new JavaStreamingContext(sparkConf, Durations.seconds(2));
+        Map<String, String> kafkaParams = new HashMap<>();
+        kafkaParams.put("bootstrap.servers", boostrapServer);
+        kafkaParams.put("zookeeper.connect", zookeeper);
+        kafkaParams.put("group.id", groupId);
+        kafkaParams.put("auto.offset.reset", autoOffsetReset);      
         HashSet<String> topics = new HashSet<String>(Arrays.asList(topiclist.split(",")));
-        
-        	
+       
         	JavaPairInputDStream<String, String>  stream =
           KafkaUtils.createDirectStream(
             streamingContext,
@@ -79,8 +73,11 @@ public class App
             kafkaParams,
             topics
           );
-        	
-        	GetTableData.enhanceData(stream);
+               	
+        	String firstProcessorId = GetProcessorDetails.getFirstProcessorName(baseurl, username, password, feedname, category);
+        	EnhanceStream enhanceStream = new EnhanceStream();
+        	enhanceStream.enhanceRecord(stream, feedname, category, uuid, firstProcessorId);
+       
         	streamingContext.start();
         	streamingContext.awaitTermination();
         
