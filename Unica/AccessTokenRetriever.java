@@ -1,21 +1,19 @@
 package com.bank.nifi.processors.unica;
 
-import net.sf.json.JSONObject;
-import net.sf.json.JSONSerializer;
+import net.sf.json.JSONException;
 
 import org.apache.commons.httpclient.HostConfiguration;
 import org.apache.commons.httpclient.HttpClient;
 import org.apache.commons.httpclient.methods.PostMethod;
 
-
-
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Scanner;
+import java.io.InputStreamReader;
+
 /**
  * Created with IntelliJ IDEA.
- * User: exampleuser
- * Date: 6/21/13
+ * User: Ankit Tripathi
+ * Date: 25/04/18
  * Time: 3:20 PM
  * To change this template use File | Settings | File Templates.
  */
@@ -30,33 +28,28 @@ public class AccessTokenRetriever {
 	private String responseText;
 	public AccessTokenRetriever(String url) {
 		this(url, new HttpClient());
+		
 	}
+
 	AccessTokenRetriever(String url, HttpClient httpClient) {
 		this.url = url;
 		this.httpClient = httpClient;
 	}
-	public String retrieveToken(String clientId, String clientSecret, String refereshToken) {
+	public String retrieveToken(String clientId, String clientSecret, String refereshToken) throws JSONException, IOException, RuntimeException {
 		PostMethod post = createPost(clientId, clientSecret, refereshToken);
-		try {
-			httpClient.executeMethod(post);
-			responseText = getResponseText(post);
-			return getTokenFromResponse();
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
+		httpClient.executeMethod(post);
+		responseText = getResponseText(post);
+		return responseText;
 	}
 	
-	public String retrieveToken(String clientId, String clientSecret, String refereshToken, String PROXY_HOST, int PROXY_PORT) {
+	public String retrieveToken(String clientId, String clientSecret, String refereshToken, String PROXY_HOST, int PROXY_PORT) throws JSONException, RuntimeException, IOException {
 		PostMethod post = createPost(clientId, clientSecret, refereshToken);
-		try {
-			HostConfiguration config = httpClient.getHostConfiguration();
-		    config.setProxy(PROXY_HOST, PROXY_PORT);
-			httpClient.executeMethod(post);
-			responseText = getResponseText(post);
-			return getTokenFromResponse();
-		} catch (Exception e) {
-			throw new RuntimeException(e);
-		}
+		HostConfiguration config = httpClient.getHostConfiguration();
+		config.setProxy(PROXY_HOST, PROXY_PORT);
+		httpClient.executeMethod(post);
+		responseText = getResponseText(post);
+		return responseText;
+		
 	}
 	private PostMethod createPost(String clientId, String clientSecret, String refereshToken) {
 		PostMethod post = new PostMethod(url);
@@ -67,13 +60,15 @@ public class AccessTokenRetriever {
 		return post;
 	}
 	private String getResponseText(PostMethod post) throws IOException {
-		InputStream is = post.getResponseBodyAsStream();
-		Scanner scanner = new Scanner(is).useDelimiter("A");
-		return scanner.hasNext() ? scanner.next() : "";
+        InputStream is = post.getResponseBodyAsStream();
+        InputStreamReader inReader = new InputStreamReader(is);
+        StringBuffer responseBuffer = new StringBuffer();
+        char[] buffer = new char[1024];
+        int bytes;
+        while ((bytes = inReader.read(buffer)) != -1) {
+        responseBuffer.append(buffer, 0, bytes);
+        }    
+        return responseBuffer.toString();
 	}
-	private String getTokenFromResponse() throws IOException {
-		JSONObject json = (JSONObject) JSONSerializer.toJSON(responseText);
-		return json.getString("access_token");
-		}
 
 }
